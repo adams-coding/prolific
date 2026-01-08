@@ -195,9 +195,12 @@ def ensure_viz_index_html(repo_path: Path) -> Path:
       const METRIC = 'net_loc_estimate'; // fixed metric for bubble sizing (keep UI simple)
       if (verEl) verEl.textContent = 'viz v__VIZ_VERSION__';
 
-      // Zoom state
+      // View state (zoom + pan)
       let zoomLevel = 1.0; // 1.0 = 100%, can range from 0.1 to 3.0
       let targetZoom = 1.0;
+      // Pan is in screen pixels (applied after zoom transform). Positive panX moves the scene right.
+      let panX = 0;
+      let panY = 0;
       const ZOOM_MIN = 0.1;
       const ZOOM_MAX = 3.0;
       const ZOOM_STEP = 0.1;
@@ -717,7 +720,7 @@ def ensure_viz_index_html(repo_path: Path) -> Path:
       }
 
       function nodeScreenPos(n) {
-        // Apply zoom transform around viewport center
+        // Apply zoom transform around viewport center, then pan in screen space.
         const w = CSS_W || window.innerWidth || canvas.clientWidth || 1;
         const h = CSS_H || window.innerHeight || canvas.clientHeight || 1;
         const centerX = w * 0.5;
@@ -729,10 +732,13 @@ def ensure_viz_index_html(repo_path: Path) -> Path:
         // Zoom around center
         const zoomedX = centerX + (rawX - centerX) * zoomLevel;
         const zoomedY = centerY + (rawY - centerY) * zoomLevel;
+        // Pan after zoom (screen pixels)
+        const pannedX = zoomedX + panX;
+        const pannedY = zoomedY + panY;
         
         return {
-          x: zoomedX,
-          y: zoomedY,
+          x: pannedX,
+          y: pannedY,
         };
       }
 
@@ -773,6 +779,9 @@ def ensure_viz_index_html(repo_path: Path) -> Path:
         
         targetZoom = Math.min(scaleX, scaleY, ZOOM_MAX);
         targetZoom = Math.max(targetZoom, ZOOM_MIN);
+        // Reset pan when auto-fitting so everything is visible.
+        panX = 0;
+        panY = 0;
       }
 
       function draw() {
@@ -1044,6 +1053,39 @@ def ensure_viz_index_html(repo_path: Path) -> Path:
           const delta = -Math.sign(e.deltaY) * ZOOM_STEP;
           targetZoom = clamp(targetZoom + delta, ZOOM_MIN, ZOOM_MAX);
         }, { passive: false });
+
+        // Drag to pan (mouse + touch via Pointer Events)
+        canvas.style.cursor = 'grab';
+        canvas.style.touchAction = 'none'; // allow touch-drag without scrolling the page
+        let isPanning = false;
+        let lastPanX = 0;
+        let lastPanY = 0;
+        canvas.addEventListener('pointerdown', (e) => {
+          if (e.button !== 0) return; // left mouse / primary touch
+          isPanning = true;
+          lastPanX = e.clientX;
+          lastPanY = e.clientY;
+          canvas.setPointerCapture(e.pointerId);
+          canvas.style.cursor = 'grabbing';
+        });
+        canvas.addEventListener('pointermove', (e) => {
+          mouse.x = e.clientX; mouse.y = e.clientY;
+          if (!isPanning) return;
+          const dx = e.clientX - lastPanX;
+          const dy = e.clientY - lastPanY;
+          lastPanX = e.clientX;
+          lastPanY = e.clientY;
+          panX += dx;
+          panY += dy;
+        });
+        const endPan = (e) => {
+          if (!isPanning) return;
+          isPanning = false;
+          try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
+          canvas.style.cursor = 'grab';
+        };
+        canvas.addEventListener('pointerup', endPan);
+        canvas.addEventListener('pointercancel', endPan);
         
         window.addEventListener('mousemove', (e) => { mouse.x = e.clientX; mouse.y = e.clientY; });
         window.addEventListener('scroll', () => { /* parallax uses scrollY() */ });

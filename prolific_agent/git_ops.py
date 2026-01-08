@@ -127,4 +127,3 @@ def commit_and_push_reports(
 
     return GitResult(committed=True, pushed=True, commit_sha=sha, message="Committed and pushed.")
 
-

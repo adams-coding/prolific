@@ -1,10 +1,34 @@
 # Prolific: Git Active
 
-Show activity on GitHub even when your real work doesn’t land in a public repo.
+## Prolific App
 
-This app runs in the background on **Windows** or **Linux** and periodically scans one or more folders for **metadata-only** changes (file size/mtime/extensions). It generates an **anonymized activity report** plus a simple **timeline bubblemap** in a target git repo, then commits/pushes those artifacts.
+I am a prolific coder!
 
-## Privacy model (non-negotiable)
+I am often coding for 12 hours or more a day.
+
+But my GitHub doesn't reflect this because I often test locally and many things never make it to GitHub.
+
+But seeing all those blank spaces in my GitHub activity makes me look lazy.
+
+To fix this I made the Prolific app.
+
+Just download and let it know which folder you code your projects in.
+
+Each time you start a new project, it will detect the new folder.
+
+Each time you modify files, add files, delete files, create other assets, Prolific will detect the changes.
+
+Every 1-4 hours, it will push an anonymized report to the git repo of your choice.
+
+After the first run (baseline), it will run automatically (including scheduled runs) and push a report on what you have been doing (no details).
+
+It also creates a nice little bubblemap with each project being a node on the bubblemap.
+
+It will identify the languages you are coding in based on file extension and color code bubblemap items accordingly.
+
+![Prolific bubblemap visualization](prolific-visualization.png)
+
+## Privacy model 
 - **Never reads file contents** (no parsing, no hashing contents, no string searching).
 - Scans use **metadata only**: size (bytes), mtime, is_dir, extension.
 - Reports committed to git contain **aggregates only** (no file names/paths).
