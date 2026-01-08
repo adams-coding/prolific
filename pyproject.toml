@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "prolific-agent"
+version = "0.1.0"
+description = "Prolific: Git Active — metadata-only activity reporting to git."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Prolific" }]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0"]
+
+[project.scripts]
+prolific-agent = "prolific_agent.cli:main"
+prolific-agent-ui = "prolific_agent.ui:launch"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["prolific_agent*"]
+
+
