@@ -237,7 +237,7 @@ def ensure_viz_index_html(repo_path: Path) -> Path:
         // Vibrant planetary/nebula colors for languages
         const planetaryColors = {
           // Programming languages - vibrant nebula colors
-          'Python': '#00FF7F',        // Plasma Green
+          'Python': '#6A00FF',        // Electric Indigo (distinct from event green)
           'JavaScript': '#FFD700',    // Gold (Saturn)
           'TypeScript': '#0080FF',    // Electric Blue
           'Java': '#FF6B35',          // Mars Orange

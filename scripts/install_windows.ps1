@@ -19,13 +19,12 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
 }
 
 $VenvPython = Join-Path $RepoRoot ".venv\Scripts\python.exe"
-if (Test-Path $VenvPython) {
-  # Use the app's local venv so scheduled runs use the same code you installed/updated.
-  $Command = "`"$VenvPython`" -m prolific_agent.cli run --config `"$ConfigPath`""
-} else {
-  # Fallback: rely on PATH/py launcher.
-  $Command = "prolific-agent run --config `"$ConfigPath`""
+if (!(Test-Path $VenvPython)) {
+  throw "Expected virtualenv python not found: $VenvPython`nRun the UI/launcher once to create .venv, then re-run this installer."
 }
+
+# Always use the app's local venv so scheduled runs match the UI behavior.
+$Command = "`"$VenvPython`" -m prolific_agent.cli run --config `"$ConfigPath`""
 
 Write-Host "Creating/Updating Scheduled Task: $TaskName"
 Write-Host "Command: $Command"

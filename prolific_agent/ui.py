@@ -268,9 +268,11 @@ class ProlificAgentUI(tk.Tk):
         interval = self.interval_var.get().strip() or "2"
 
         if "windows" in sysname:
+            # Pass AppRoot so the Scheduled Task uses THIS repo's .venv (consistent with UI).
+            app_root = str(scripts_dir.parent)
             install_cmd = (
                 f'powershell -ExecutionPolicy Bypass -File "{scripts_dir / "install_windows.ps1"}" '
-                f'-ConfigPath "{self.config_path}" -IntervalHours {interval}'
+                f'-ConfigPath "{self.config_path}" -IntervalHours {interval} -AppRoot "{app_root}"'
             )
             uninstall_cmd = f'powershell -ExecutionPolicy Bypass -File "{scripts_dir / "uninstall_windows.ps1"}"'
             title = "Windows Scheduled Task"

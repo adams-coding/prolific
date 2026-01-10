@@ -18,7 +18,7 @@ Each time you start a new project, it will detect the new folder.
 
 Each time you modify files, add files, delete files, create other assets, Prolific will detect the changes.
 
-Every 1-4 hours, it will push an anonymized report to the git repo of your choice.
+Every 1-4 hours, it will push an anonymized report to the git repo of your choice. (creating activity on githubs contributions calendar)
 
 After the first run (baseline), it will run automatically (including scheduled runs) and push a report on what you have been doing (no details).
 
