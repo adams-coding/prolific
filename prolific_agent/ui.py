@@ -3,6 +3,9 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import platform
+import threading
+import time
+from datetime import datetime, timedelta
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext
 import subprocess
@@ -96,6 +99,7 @@ class ProlificAgentUI(tk.Tk):
         row6.pack(fill="x", **pad)
         tk.Button(row6, text="Save config", command=self._save_config).pack(side="left")
         tk.Button(row6, text="Run now", command=self._run_now).pack(side="left", padx=8)
+        tk.Button(row6, text="Test scheduler", command=self._test_scheduler).pack(side="left", padx=8)
         tk.Button(row6, text="Installer help", command=self._installer_help).pack(side="left", padx=8)
 
         # Output
@@ -260,6 +264,147 @@ class ProlificAgentUI(tk.Tk):
             import traceback
             self._log(traceback.format_exc())
             messagebox.showerror("Fatal error", str(e))
+
+    def _test_scheduler(self) -> None:
+        """
+        Run a one-off Scheduled Task that executes the same command as the scheduler.
+
+        This helps validate that the Scheduled Task environment (python/venv/git auth)
+        matches what "Run now" does.
+        """
+        if platform.system() != "Windows":
+            messagebox.showinfo("Not supported", "Test scheduler is only supported on Windows.")
+            return
+
+        try:
+            cfg = self._current_cfg()
+        except Exception as e:
+            messagebox.showerror("Invalid config", str(e))
+            return
+
+        app_root = Path(__file__).resolve().parents[1]
+        venv_python = app_root / ".venv" / "Scripts" / "python.exe"
+        if not venv_python.exists():
+            messagebox.showerror(
+                "Missing .venv",
+                f"Expected venv python not found:\n{venv_python}\n\n"
+                "Run the Windows launcher once to create .venv, then try again.",
+            )
+            return
+
+        # Use a dedicated test log so it's easy to inspect.
+        state_dir = Path(os.path.expanduser("~")) / ".prolific"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        log_path = state_dir / "scheduler_test.log"
+
+        task_name = f"ProlificGitActive_Test_{int(time.time())}"
+        cmd = (
+            f'cmd.exe /c ""{venv_python}" -m prolific_agent.cli run --config "{self.config_path}" '
+            f'>> "{log_path}" 2>&1"'
+        )
+
+        def run_test() -> None:
+            def ui_log(msg: str) -> None:
+                self.after(0, lambda: self._log(msg))
+
+            def run_hidden(args: list[str]) -> subprocess.CompletedProcess[str]:
+                kwargs = {"text": True, "capture_output": True, "check": False}
+                kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+                return subprocess.run(args, **kwargs)
+
+            ui_log("=== Test scheduler ===")
+            ui_log(f"Scheduling one-off task: {task_name}")
+            ui_log(f"Log file: {log_path}")
+
+            # Ensure log file exists so missing execution is obvious.
+            try:
+                log_path.write_text("", encoding="utf-8")
+            except Exception:
+                pass
+
+            cp_create = run_hidden(
+                [
+                    "schtasks",
+                    "/Create",
+                    "/F",
+                    "/SC",
+                    "ONCE",
+                    # Use a dummy schedule time/date; we force-run it immediately via /Run.
+                    "/SD",
+                    "01/01/2000",
+                    "/ST",
+                    "00:00",
+                    "/TN",
+                    task_name,
+                    "/TR",
+                    cmd,
+                ]
+            )
+            if cp_create.returncode != 0:
+                ui_log(f"[test_scheduler] schtasks create failed: {cp_create.stderr.strip()}")
+                self.after(
+                    0,
+                    lambda: messagebox.showerror("Test scheduler failed", cp_create.stderr.strip() or "schtasks create failed"),
+                )
+                return
+
+            # Force-run immediately to avoid locale-specific date format issues.
+            ui_log("Forcing the task to run now (schtasks /Run)...")
+            cp_run = run_hidden(["schtasks", "/Run", "/TN", task_name])
+            if cp_run.returncode != 0:
+                ui_log(f"[test_scheduler] schtasks run failed: {cp_run.stderr.strip()}")
+
+            # Poll until the run finishes (or timeout).
+            # 267011 = has not yet run, 267009 = currently running.
+            ui_log("Waiting for task to execute and finish (up to ~180s)...")
+            deadline = time.time() + 180
+            last_result_line = None
+            status_line = None
+            while time.time() < deadline:
+                cp_q = run_hidden(["schtasks", "/Query", "/TN", task_name, "/V", "/FO", "LIST"])
+                if cp_q.returncode == 0 and cp_q.stdout:
+                    lines_all = [ln.strip() for ln in cp_q.stdout.splitlines() if ln.strip()]
+                    status_line = next((ln for ln in lines_all if ln.startswith("Status:")), None)
+                    last_result_line = next((ln for ln in lines_all if ln.startswith("Last Result:")), None)
+
+                    # If still running, keep waiting.
+                    if last_result_line and "267009" in last_result_line:
+                        time.sleep(3)
+                        continue
+
+                    # If it has run and is no longer running, stop polling.
+                    if last_result_line and "267011" not in last_result_line:
+                        break
+
+                time.sleep(3)
+
+            cp_query = run_hidden(["schtasks", "/Query", "/TN", task_name, "/V", "/FO", "LIST"])
+            if cp_query.returncode == 0 and cp_query.stdout:
+                # Pull the key fields for quick visibility.
+                lines = [ln.strip() for ln in cp_query.stdout.splitlines() if ln.strip()]
+                for key in ("Last Run Time:", "Last Result:", "Task To Run:"):
+                    hit = next((ln for ln in lines if ln.startswith(key)), None)
+                    if hit:
+                        ui_log(f"[test_scheduler] {hit}")
+            else:
+                ui_log(f"[test_scheduler] schtasks query failed: {cp_query.stderr.strip()}")
+
+            # Delete the test task (only after we've given it time to finish).
+            _ = run_hidden(["schtasks", "/Delete", "/F", "/TN", task_name])
+
+            # Tail the log for quick diagnosis.
+            try:
+                if log_path.exists():
+                    tail = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-60:]
+                    ui_log("=== scheduler_test.log (tail) ===")
+                    for ln in tail:
+                        ui_log(ln)
+            except Exception as e:
+                ui_log(f"[test_scheduler] failed to read log: {e}")
+
+            ui_log("=== Test scheduler done ===")
+
+        threading.Thread(target=run_test, daemon=True).start()
 
     def _installer_help(self, run_now: bool = False) -> None:
         sysname = platform.system().lower()
