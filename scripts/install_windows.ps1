@@ -44,29 +44,19 @@ Write-Host "LogPath: $LogPath"
 
 schtasks /Create /F /SC HOURLY /MO $IntervalHours /TN $TaskName /TR $Command | Out-Null
 
-# Disable battery restrictions (default schtasks settings can prevent running on battery)
+# Disable battery restrictions (best-effort, without fragile XML rewriting)
 try {
-  $xml = schtasks /Query /TN $TaskName /XML 2>$null
-  if ($LASTEXITCODE -eq 0 -and $xml) {
-    $xml2 = $xml
-    # Flip existing flags if present
-    $xml2 = $xml2 -replace "<DisallowStartIfOnBatteries>true</DisallowStartIfOnBatteries>", "<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>"
-    $xml2 = $xml2 -replace "<StopIfGoingOnBatteries>true</StopIfGoingOnBatteries>", "<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>"
-    # Ensure flags exist (insert if missing)
-    if ($xml2 -notmatch "<DisallowStartIfOnBatteries>") {
-      $xml2 = $xml2 -replace "</Settings>", "  <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>`n</Settings>"
-    }
-    if ($xml2 -notmatch "<StopIfGoingOnBatteries>") {
-      $xml2 = $xml2 -replace "</Settings>", "  <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>`n</Settings>"
-    }
-
-    $tmp = Join-Path $env:TEMP ("prolific-task-" + [Guid]::NewGuid().ToString() + ".xml")
-    Set-Content -Path $tmp -Value $xml2 -Encoding UTF8
-    schtasks /Create /F /TN $TaskName /XML $tmp | Out-Null
-    Remove-Item -Force $tmp -ErrorAction SilentlyContinue
+  if (Get-Command Get-ScheduledTask -ErrorAction SilentlyContinue) {
+    $t = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+    $s = $t.Settings
+    $s.DisallowStartIfOnBatteries = $false
+    $s.StopIfGoingOnBatteries = $false
+    Set-ScheduledTask -TaskName $TaskName -Settings $s | Out-Null
+  } else {
+    Write-Host "Note: ScheduledTasks module not available; skipping battery setting update."
   }
 } catch {
-  # Non-fatal: task still installed; log will capture failures.
+  Write-Host "Note: Could not update battery settings (non-fatal): $($_.Exception.Message)"
 }
 
 Write-Host "Done. You can verify with:"
