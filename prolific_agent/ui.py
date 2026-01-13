@@ -7,7 +7,7 @@ import threading
 import time
 from datetime import datetime, timedelta
 import tkinter as tk
-from tkinter import filedialog, messagebox, scrolledtext
+from tkinter import filedialog, messagebox, scrolledtext, ttk
 import subprocess
 import importlib
 
@@ -22,6 +22,72 @@ def _safe_int(s: str, fallback: int) -> int:
     except Exception:
         return fallback
 
+
+class ToolTip:
+    """Minimal tooltip for Tk/ttk widgets."""
+
+    def __init__(self, widget: tk.Widget, text: str) -> None:
+        self.widget = widget
+        self.text = text
+        self._tw: tk.Toplevel | None = None
+        self._after_id: str | None = None
+
+        widget.bind("<Enter>", self._on_enter, add=True)
+        widget.bind("<Leave>", self._on_leave, add=True)
+        widget.bind("<ButtonPress>", self._on_leave, add=True)
+
+    def _on_enter(self, _e=None) -> None:
+        if self._after_id is not None:
+            try:
+                self.widget.after_cancel(self._after_id)
+            except Exception:
+                pass
+        self._after_id = self.widget.after(450, self._show)
+
+    def _on_leave(self, _e=None) -> None:
+        if self._after_id is not None:
+            try:
+                self.widget.after_cancel(self._after_id)
+            except Exception:
+                pass
+            self._after_id = None
+        self._hide()
+
+    def _show(self) -> None:
+        self._after_id = None
+        if self._tw is not None or not self.text:
+            return
+        try:
+            x = self.widget.winfo_rootx() + 16
+            y = self.widget.winfo_rooty() + self.widget.winfo_height() + 10
+        except Exception:
+            return
+
+        tw = tk.Toplevel(self.widget)
+        self._tw = tw
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+        tw.attributes("-topmost", True)
+
+        frm = ttk.Frame(tw, padding=(10, 6))
+        frm.pack(fill="both", expand=True)
+        lbl = ttk.Label(frm, text=self.text, justify="left", wraplength=420)
+        lbl.pack()
+
+        try:
+            frm.configure(style="Prolific.Tooltip.TFrame")
+            lbl.configure(style="Prolific.Tooltip.TLabel")
+        except Exception:
+            pass
+
+    def _hide(self) -> None:
+        if self._tw is None:
+            return
+        try:
+            self._tw.destroy()
+        except Exception:
+            pass
+        self._tw = None
 
 class ProlificAgentUI(tk.Tk):
     def __init__(self, config_path: Path | None = None) -> None:
@@ -44,79 +110,129 @@ class ProlificAgentUI(tk.Tk):
         self._load_if_exists()
 
     def _build(self) -> None:
-        pad = {"padx": 10, "pady": 6}
+        pad = {"padx": 12, "pady": 8}
 
-        frm = tk.Frame(self)
+        # Theme + a couple of styles to make things look cleaner
+        try:
+            style = ttk.Style(self)
+            if "vista" in style.theme_names():
+                style.theme_use("vista")
+            elif "clam" in style.theme_names():
+                style.theme_use("clam")
+            style.configure("Prolific.Tooltip.TFrame", background="#111319")
+            style.configure("Prolific.Tooltip.TLabel", background="#111319", foreground="#e7e9ee")
+        except Exception:
+            pass
+
+        frm = ttk.Frame(self)
         frm.pack(fill="both", expand=False)
 
         # Config path row
-        row0 = tk.Frame(frm)
+        row0 = ttk.Frame(frm)
         row0.pack(fill="x", **pad)
-        tk.Label(row0, text="Config path:").pack(side="left")
-        tk.Label(row0, text=str(self.config_path), fg="#555").pack(side="left", padx=8)
+        ttk.Label(row0, text="Config path:").pack(side="left")
+        ttk.Label(row0, text=str(self.config_path), foreground="#555").pack(side="left", padx=8)
 
         # Watch folders
-        row_watch = tk.Frame(frm)
+        row_watch = ttk.Frame(frm)
         row_watch.pack(fill="x", **pad)
-        tk.Label(row_watch, text="Watch folders (metadata only):").pack(anchor="w")
+        lbl_watch = ttk.Label(row_watch, text="Watch folders (metadata only):")
+        lbl_watch.pack(anchor="w")
 
         warn = (
             "Warning: Do NOT add entire drives or very large folders. "
             "This can cause high CPU/memory usage."
         )
-        tk.Label(row_watch, text=warn, fg="#b00020").pack(anchor="w", pady=(2, 6))
+        lbl_warn = ttk.Label(row_watch, text=warn, foreground="#b00020")
+        lbl_warn.pack(anchor="w", pady=(2, 6))
 
-        row_watch2 = tk.Frame(frm)
+        row_watch2 = ttk.Frame(frm)
         row_watch2.pack(fill="x", **pad)
-        self.watch_list = tk.Listbox(row_watch2, height=4)
+        self.watch_list = tk.Listbox(row_watch2, height=4, activestyle="none")
         self.watch_list.pack(side="left", fill="both", expand=True)
-        btns = tk.Frame(row_watch2)
+        btns = ttk.Frame(row_watch2)
         btns.pack(side="left", padx=8)
-        tk.Button(btns, text="Add…", command=self._add_watch).pack(fill="x")
-        tk.Button(btns, text="Remove", command=self._remove_watch).pack(fill="x", pady=4)
+        btn_add = ttk.Button(btns, text="Add…", command=self._add_watch)
+        btn_add.pack(fill="x")
+        btn_remove = ttk.Button(btns, text="Remove", command=self._remove_watch)
+        btn_remove.pack(fill="x", pady=4)
+
+        ToolTip(
+            self.watch_list,
+            "Folders you code in (metadata only). Each immediate subfolder becomes a project node after it changes.",
+        )
+        ToolTip(btn_add, "Add a folder to watch (metadata only). Avoid entire drives.")
+        ToolTip(btn_remove, "Remove the selected watch folder.")
         # Repo path
         self._path_row(frm, "Git repo folder (reports/viz):", self.repo_path_var, self._choose_repo, pad)
 
         # Interval / branch / remote
-        row3 = tk.Frame(frm)
+        row3 = ttk.Frame(frm)
         row3.pack(fill="x", **pad)
-        tk.Label(row3, text="Interval hours (1-4):").pack(side="left")
-        tk.Entry(row3, width=6, textvariable=self.interval_var).pack(side="left", padx=6)
-        tk.Label(row3, text="Branch:").pack(side="left", padx=12)
-        tk.Entry(row3, width=12, textvariable=self.branch_var).pack(side="left", padx=6)
-        tk.Label(row3, text="Remote:").pack(side="left", padx=12)
-        tk.Entry(row3, width=12, textvariable=self.remote_var).pack(side="left", padx=6)
-        tk.Checkbutton(row3, text="Push", variable=self.push_var).pack(side="left", padx=12)
+        ttk.Label(row3, text="Interval hours (1-4):").pack(side="left")
+        ent_interval = ttk.Entry(row3, width=6, textvariable=self.interval_var)
+        ent_interval.pack(side="left", padx=6)
+        ttk.Label(row3, text="Branch:").pack(side="left", padx=12)
+        ent_branch = ttk.Entry(row3, width=12, textvariable=self.branch_var)
+        ent_branch.pack(side="left", padx=6)
+        ttk.Label(row3, text="Remote:").pack(side="left", padx=12)
+        ent_remote = ttk.Entry(row3, width=12, textvariable=self.remote_var)
+        ent_remote.pack(side="left", padx=6)
+        chk_push = ttk.Checkbutton(row3, text="Push", variable=self.push_var)
+        chk_push.pack(side="left", padx=12)
+
+        ToolTip(ent_interval, "How often to run automatically (hours). 1–4 recommended.")
+        ToolTip(ent_branch, "Git branch to commit/push to in the activity repo (usually main).")
+        ToolTip(ent_remote, "Git remote to push to in the activity repo (usually origin).")
+        ToolTip(chk_push, "If unchecked, commits locally but does not push (useful for testing).")
 
         # Excludes
-        row5 = tk.Frame(frm)
+        row5 = ttk.Frame(frm)
         row5.pack(fill="x", **pad)
-        tk.Label(row5, text="Exclude globs (comma-separated):").pack(side="left")
-        tk.Entry(row5, textvariable=self.excludes_var).pack(side="left", fill="x", expand=True, padx=6)
+        ttk.Label(row5, text="Exclude globs (comma-separated):").pack(side="left")
+        ent_excludes = ttk.Entry(row5, textvariable=self.excludes_var)
+        ent_excludes.pack(side="left", fill="x", expand=True, padx=6)
+        ToolTip(ent_excludes, "Optional: exclude patterns like node_modules/**, **/.git/**, dist/**")
 
         # Buttons
-        row6 = tk.Frame(frm)
+        row6 = ttk.Frame(frm)
         row6.pack(fill="x", **pad)
-        tk.Button(row6, text="Save config", command=self._save_config).pack(side="left")
-        tk.Button(row6, text="Run now", command=self._run_now).pack(side="left", padx=8)
-        tk.Button(row6, text="Test scheduler", command=self._test_scheduler).pack(side="left", padx=8)
-        tk.Button(row6, text="Installer help", command=self._installer_help).pack(side="left", padx=8)
+        btn_save = ttk.Button(row6, text="Save config", command=self._save_config)
+        btn_save.pack(side="left")
+        btn_run = ttk.Button(row6, text="Run now", command=self._run_now)
+        btn_run.pack(side="left", padx=8)
+        btn_test = ttk.Button(row6, text="Test scheduler", command=self._test_scheduler)
+        btn_test.pack(side="left", padx=8)
+        btn_install = ttk.Button(row6, text="Installer help", command=self._installer_help)
+        btn_install.pack(side="left", padx=8)
+
+        ToolTip(btn_save, "Save the config to ~/.prolific/config.toml")
+        ToolTip(btn_run, "Run one scan/diff/report cycle now. May take a minute on large folders.")
+        ToolTip(btn_test, "Windows only: run a one-off Scheduled Task now and show the log tail.")
+        ToolTip(btn_install, "Install/remove background scheduling (Windows Scheduled Task / Linux systemd).")
 
         # Output
-        out_frame = tk.Frame(self)
+        out_frame = ttk.Frame(self)
         out_frame.pack(fill="both", expand=True, padx=10, pady=10)
-        tk.Label(out_frame, text="Output:").pack(anchor="w")
+        ttk.Label(out_frame, text="Output:").pack(anchor="w")
         self.output = scrolledtext.ScrolledText(out_frame, height=18)
         self.output.pack(fill="both", expand=True)
 
         self._log("Ready. This app never reads file contents; it only uses file metadata (size/mtime/extensions).")
 
     def _path_row(self, parent: tk.Widget, label: str, var: tk.StringVar, choose_cb, pad) -> None:
-        row = tk.Frame(parent)
+        row = ttk.Frame(parent)
         row.pack(fill="x", **pad)
-        tk.Label(row, text=label).pack(side="left")
-        tk.Entry(row, textvariable=var).pack(side="left", fill="x", expand=True, padx=6)
-        tk.Button(row, text="Browse…", command=choose_cb).pack(side="left")
+        ttk.Label(row, text=label).pack(side="left")
+        ent = ttk.Entry(row, textvariable=var)
+        ent.pack(side="left", fill="x", expand=True, padx=6)
+        btn = ttk.Button(row, text="Browse…", command=choose_cb)
+        btn.pack(side="left")
+        ToolTip(
+            ent,
+            "Path to the activity repo where reports and the bubblemap site are written (e.g. C:/coding/pro-lific-output/pro-lific).",
+        )
+        ToolTip(btn, "Choose the activity repo folder.")
 
     def _choose_scan(self) -> None:
         self._add_watch()
