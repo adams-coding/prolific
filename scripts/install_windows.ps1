@@ -32,9 +32,10 @@ if ([string]::IsNullOrWhiteSpace($LogPath)) {
   $LogPath = (Resolve-Path (Split-Path -Parent $LogPath)).Path + "\" + (Split-Path -Leaf $LogPath)
 }
 
-# Always use the app's local venv so scheduled runs match the UI behavior.
-# Also redirect stdout/stderr to a persistent log for debugging.
-$Command = "cmd.exe /c `"`"$VenvPython`" -m prolific_agent.cli run --config `"$ConfigPath`" >> `"$LogPath`" 2>&1`""
+# Run via PowerShell -WindowStyle Hidden -File so no CMD/PowerShell window pops up.
+# run_scheduled.ps1 lives next to this script and runs the venv python, appending to LogPath.
+$RunScript = Join-Path $PSScriptRoot "run_scheduled.ps1"
+$Command = "powershell.exe -NoProfile -WindowStyle Hidden -File `"$RunScript`" -ConfigPath `"$ConfigPath`" -LogPath `"$LogPath`" -AppRoot `"$RepoRoot`""
 
 Write-Host "Creating/Updating Scheduled Task: $TaskName"
 Write-Host "Command: $Command"
@@ -44,19 +45,16 @@ Write-Host "LogPath: $LogPath"
 
 schtasks /Create /F /SC HOURLY /MO $IntervalHours /TN $TaskName /TR $Command | Out-Null
 
-# Disable battery restrictions (best-effort, without fragile XML rewriting)
+# Run task hidden (no window) and disable battery restrictions (best-effort)
 try {
   if (Get-Command Get-ScheduledTask -ErrorAction SilentlyContinue) {
-    $t = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop
-    $s = $t.Settings
-    $s.DisallowStartIfOnBatteries = $false
-    $s.StopIfGoingOnBatteries = $false
-    Set-ScheduledTask -TaskName $TaskName -Settings $s | Out-Null
+    $hiddenSettings = New-ScheduledTaskSettingsSet -Hidden -DisallowStartIfOnBatteries $false -StopIfGoingOnBatteries $false
+    Set-ScheduledTask -TaskName $TaskName -Settings $hiddenSettings | Out-Null
   } else {
-    Write-Host "Note: ScheduledTasks module not available; skipping battery setting update."
+    Write-Host "Note: ScheduledTasks module not available; skipping hidden/battery settings."
   }
 } catch {
-  Write-Host "Note: Could not update battery settings (non-fatal): $($_.Exception.Message)"
+  Write-Host "Note: Could not update task settings (non-fatal): $($_.Exception.Message)"
 }
 
 Write-Host "Done. You can verify with:"

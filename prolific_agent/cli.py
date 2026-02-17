@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import json
+import random
 from pathlib import Path
 import sys
+import time
 
-from prolific_agent.config import default_config_path, load_config, write_default_config
+from prolific_agent.config import default_config_path, default_state_dir, load_config, write_default_config
 from prolific_agent.run_cycle import run_once
 from prolific_agent.ui import launch as launch_ui
 
@@ -34,6 +37,46 @@ def cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def _last_run_path() -> Path:
+    return default_state_dir() / "state" / "last_run.json"
+
+
+def _read_last_run_ts(path: Path) -> float | None:
+    """Return last run timestamp (seconds since epoch) or None."""
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return float(data.get("last_run_ts", 0)) or None
+    except Exception:
+        return None
+
+
+def _read_next_run_ts(path: Path) -> float | None:
+    """Return next run timestamp (when random_delay_hours is used we store next_run_ts)."""
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return float(data.get("next_run_ts", 0)) or None
+    except Exception:
+        return None
+
+
+def _write_last_run_ts(path: Path, ts: float) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"last_run_ts": ts}, indent=2), encoding="utf-8")
+
+
+def _write_next_run_ts(path: Path, next_ts: float) -> None:
+    """Save next_run_ts so we know when to run again. Also keep last_run_ts for compatibility."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"last_run_ts": time.time(), "next_run_ts": next_ts}, indent=2),
+        encoding="utf-8",
+    )
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     config_path = Path(args.config).expanduser() if args.config else default_config_path()
     if not config_path.exists():
@@ -41,6 +84,24 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 2
 
     cfg = load_config(config_path)
+
+    # When random_delay_hours > 0: next run time was set when we last ran (last_run + interval + one random).
+    # Minimum gap = interval_hours; maximum = interval_hours + random_delay_hours. Random is chosen once per run.
+    random_delay_hours = getattr(cfg, "random_delay_hours", 0) or 0
+    if random_delay_hours > 0:
+        state_dir = default_state_dir()
+        state_dir.mkdir(parents=True, exist_ok=True)
+        last_run_path = _last_run_path()
+        next_run_ts = _read_next_run_ts(last_run_path)
+        now_ts = time.time()
+        if next_run_ts is not None and now_ts < next_run_ts:
+            return 0  # skip; not yet time (next run was scheduled when we last ran)
+
+    # Optional random delay so scheduled runs don't always hit at the same time
+    if getattr(cfg, "random_delay_minutes", 0) > 0:
+        delay_sec = random.uniform(0, cfg.random_delay_minutes * 60)
+        time.sleep(delay_sec)
+
     # Warning about risky watch folders (avoid watching entire drives/huge folders).
     for p in cfg.scan_paths:
         try:
@@ -54,6 +115,13 @@ def cmd_run(args: argparse.Namespace) -> int:
                 "Prefer a project folder instead."
             )
     result = run_once(cfg)
+
+    # When using random_delay_hours: set next run = now + interval + random(0, random_delay_hours). One draw per run.
+    if random_delay_hours > 0:
+        gap_hours = cfg.interval_hours + random.uniform(0, random_delay_hours)
+        next_run_ts = time.time() + gap_hours * 3600
+        _write_next_run_ts(_last_run_path(), next_run_ts)
+
     print(f"event_id={result['event_id']}")
     print(f"net_loc_estimate={result['net_loc_estimate']}")
     print(f"churn_loc_estimate={result['churn_loc_estimate']}")

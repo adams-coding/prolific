@@ -37,6 +37,8 @@ class AgentConfig:
     scan_paths: list[Path]
     repo_path: Path
     interval_hours: int = 2  # scheduling is external; kept for reference/validation
+    random_delay_minutes: int = 0  # 0=off; max delay before each run to spread check times
+    random_delay_hours: float = 0.0  # 0=off. When >0: after each run we pick R in [0, N]; next run = now + interval + R (one draw per run).
     branch: str = "main"
     remote: str = "origin"
     push: bool = True
@@ -47,6 +49,10 @@ class AgentConfig:
     def validate(self) -> None:
         if not (1 <= int(self.interval_hours) <= 4):
             raise ValueError("interval_hours must be between 1 and 4")
+        if not (0 <= int(self.random_delay_minutes) <= 60):
+            raise ValueError("random_delay_minutes must be between 0 and 60")
+        if not (0 <= float(self.random_delay_hours) <= 4):
+            raise ValueError("random_delay_hours must be between 0 and 4")
         if not self.scan_paths:
             raise ValueError("scan_paths must include at least one directory")
         for p in self.scan_paths:
@@ -73,6 +79,8 @@ class AgentConfig:
         lines.append("]")
         lines.append(f'repo_path = "{self.repo_path.as_posix()}"')
         lines.append(f"interval_hours = {int(self.interval_hours)}")
+        lines.append(f"random_delay_minutes = {int(self.random_delay_minutes)}")
+        lines.append(f"random_delay_hours = {float(self.random_delay_hours)}")
         lines.append(f'branch = "{self.branch}"')
         lines.append(f'remote = "{self.remote}"')
         lines.append(f"push = {str(bool(self.push)).lower()}")
@@ -111,6 +119,8 @@ def load_config(path: Path) -> AgentConfig:
         scan_paths=scan_paths,
         repo_path=Path(agent["repo_path"]).expanduser(),
         interval_hours=int(agent.get("interval_hours", 2)),
+        random_delay_minutes=int(agent.get("random_delay_minutes", 0)),
+        random_delay_hours=float(agent.get("random_delay_hours", 0)),
         branch=str(agent.get("branch", "main")),
         remote=str(agent.get("remote", "origin")),
         push=bool(agent.get("push", True)),

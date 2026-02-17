@@ -23,6 +23,13 @@ def _safe_int(s: str, fallback: int) -> int:
         return fallback
 
 
+def _safe_float(s: str, fallback: float) -> float:
+    try:
+        return float(s.strip())
+    except Exception:
+        return fallback
+
+
 class ToolTip:
     """Minimal tooltip for Tk/ttk widgets."""
 
@@ -101,6 +108,8 @@ class ProlificAgentUI(tk.Tk):
         self.watch_paths: list[str] = []
         self.repo_path_var = tk.StringVar()
         self.interval_var = tk.StringVar(value="2")
+        self.random_delay_var = tk.StringVar(value="0")
+        self.random_delay_hours_var = tk.StringVar(value="0")
         self.branch_var = tk.StringVar(value="main")
         self.remote_var = tk.StringVar(value="origin")
         self.push_var = tk.BooleanVar(value=True)
@@ -172,6 +181,12 @@ class ProlificAgentUI(tk.Tk):
         ttk.Label(row3, text="Interval hours (1-4):").pack(side="left")
         ent_interval = ttk.Entry(row3, width=6, textvariable=self.interval_var)
         ent_interval.pack(side="left", padx=6)
+        ttk.Label(row3, text="Random delay (min, 0=off):").pack(side="left", padx=12)
+        ent_random_delay = ttk.Entry(row3, width=5, textvariable=self.random_delay_var)
+        ent_random_delay.pack(side="left", padx=2)
+        ttk.Label(row3, text="Random extra (hrs, 0=off):").pack(side="left", padx=12)
+        ent_random_hours = ttk.Entry(row3, width=5, textvariable=self.random_delay_hours_var)
+        ent_random_hours.pack(side="left", padx=2)
         ttk.Label(row3, text="Branch:").pack(side="left", padx=12)
         ent_branch = ttk.Entry(row3, width=12, textvariable=self.branch_var)
         ent_branch.pack(side="left", padx=6)
@@ -182,6 +197,8 @@ class ProlificAgentUI(tk.Tk):
         chk_push.pack(side="left", padx=12)
 
         ToolTip(ent_interval, "How often to run automatically (hours). 1–4 recommended.")
+        ToolTip(ent_random_delay, "Max random delay in minutes before each check. 0=off. Spreads run times (e.g. 15 = up to 15 min delay).")
+        ToolTip(ent_random_hours, "Add 0 to N hours to the interval before the next run. Next run = last run + interval + random(0,N). When set, install with 1-hour schedule.")
         ToolTip(ent_branch, "Git branch to commit/push to in the activity repo (usually main).")
         ToolTip(ent_remote, "Git remote to push to in the activity repo (usually origin).")
         ToolTip(chk_push, "If unchecked, commits locally but does not push (useful for testing).")
@@ -275,6 +292,8 @@ class ProlificAgentUI(tk.Tk):
         self._refresh_watch_list()
         self.repo_path_var.set(str(cfg.repo_path))
         self.interval_var.set(str(cfg.interval_hours))
+        self.random_delay_var.set(str(getattr(cfg, "random_delay_minutes", 0)))
+        self.random_delay_hours_var.set(str(getattr(cfg, "random_delay_hours", 0)))
         self.branch_var.set(cfg.branch)
         self.remote_var.set(cfg.remote)
         self.push_var.set(bool(cfg.push))
@@ -294,6 +313,8 @@ class ProlificAgentUI(tk.Tk):
             scan_paths=scan_paths,
             repo_path=repo_path,
             interval_hours=_safe_int(self.interval_var.get(), 2),
+            random_delay_minutes=_safe_int(self.random_delay_var.get(), 0),
+            random_delay_hours=_safe_float(self.random_delay_hours_var.get(), 0),
             branch=self.branch_var.get().strip() or "main",
             remote=self.remote_var.get().strip() or "origin",
             push=bool(self.push_var.get()),
@@ -526,7 +547,9 @@ class ProlificAgentUI(tk.Tk):
         sysname = platform.system().lower()
         scripts_dir = Path(__file__).resolve().parents[1] / "scripts"
 
-        interval = self.interval_var.get().strip() or "2"
+        # When random_delay_hours > 0 we need hourly triggers so run times can vary (next = last + interval + random)
+        random_hrs = _safe_float(self.random_delay_hours_var.get(), 0)
+        interval = "1" if random_hrs > 0 else (self.interval_var.get().strip() or "2")
 
         if "windows" in sysname:
             # Pass AppRoot so the Scheduled Task uses THIS repo's .venv (consistent with UI).
