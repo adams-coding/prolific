@@ -343,6 +343,8 @@ def ensure_viz_index_html(repo_path: Path) -> Path:
       let eventsCache = [];
       let nodes = [];   // {id,type,label,x,y,z,vx,vy,r,color,meta,locked}
       let links = [];   // {a,b,rest,k}
+      let nodeById = new Map();  // id -> node for O(1) lookup
+      let drawOrder = [];        // nodes sorted by z then r, recomputed only when scene is built
       let stars = [];
       let lastT = performance.now();
       let mouse = { x: 0, y: 0, down: false };
@@ -630,6 +632,8 @@ def ensure_viz_index_html(repo_path: Path) -> Path:
             }
           });
         });
+        nodeById = new Map(nodes.map(n => [n.id, n]));
+        drawOrder = [...nodes].sort((a, b) => (a.z - b.z) || (a.r - b.r));
       }
 
       function applyPhysics(dt) {
@@ -649,8 +653,8 @@ def ensure_viz_index_html(repo_path: Path) -> Path:
             continue;
           }
           
-          // Find parent node for events and satellites
-          const parent = nodes.find(p => p.id === n.meta.parentId);
+          // Find parent node for events and satellites (O(1) via Map)
+          const parent = nodeById.get(n.meta.parentId);
           if (!parent) continue;
           
           // Update position based on parent position + orbital rotation
@@ -659,51 +663,8 @@ def ensure_viz_index_html(repo_path: Path) -> Path:
           n.y = parent.y + Math.sin(n.meta.orbitAngle) * radius;
         }
         
-        // Soft collision detection - bubbles can partially pass through each other
-        // Like ethereal nebula clouds - they interact but don't hard collide
-        for (let i = 0; i < nodes.length; i++) {
-          for (let j = i + 1; j < nodes.length; j++) {
-            const a = nodes[i];
-            const b = nodes[j];
-            
-            // Skip locked nodes entirely
-            if (a.locked && b.locked) continue;
-            
-            const dx = b.x - a.x;
-            const dy = b.y - a.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            
-            // Allow overlap - only apply force when significantly overlapping
-            // Bubbles can pass through each other with just a gentle push
-            const overlapThreshold = (a.r + b.r) * 0.7; // Only react at 70% overlap
-            
-            if (dist < overlapThreshold && dist > 0.1) {
-              const overlap = overlapThreshold - dist;
-              const nx = dx / dist; // Normalize
-              const ny = dy / dist;
-              
-              // Very soft, muted separation force - like clouds drifting past each other
-              const softness = 0.05; // Much gentler than before (was 0.5)
-              const separationForce = overlap * softness;
-              
-              // Only apply to non-locked nodes
-              if (!a.locked) {
-                a.x -= nx * separationForce;
-                a.y -= ny * separationForce;
-                // Very gentle velocity change
-                a.vx -= nx * separationForce * 0.02;
-                a.vy -= ny * separationForce * 0.02;
-              }
-              if (!b.locked) {
-                b.x += nx * separationForce;
-                b.y += ny * separationForce;
-                // Very gentle velocity change
-                b.vx += nx * separationForce * 0.02;
-                b.vy += ny * separationForce * 0.02;
-              }
-            }
-          }
-        }
+        // Collision pass removed for scale: O(n^2) was too costly with thousands of nodes.
+        // Orbital motion alone keeps layout stable and readable.
         
         // Apply velocity and damping
         for (const n of nodes) {
@@ -828,8 +789,8 @@ def ensure_viz_index_html(repo_path: Path) -> Path:
         // Links - connect bubble edges, not centers
         ctx.save();
         for (const l of links) {
-          const a = nodes.find(n => n.id === l.a);
-          const b = nodes.find(n => n.id === l.b);
+          const a = nodeById.get(l.a);
+          const b = nodeById.get(l.b);
           if (!a || !b) continue;
           const ap = nodeScreenPos(a);
           const bp = nodeScreenPos(b);
@@ -863,10 +824,9 @@ def ensure_viz_index_html(repo_path: Path) -> Path:
         }
         ctx.restore();
 
-        // Nodes (high-contrast fallback so bubbles are unmistakable)
+        // Nodes (high-contrast fallback so bubbles are unmistakable); use pre-sorted drawOrder
         hovered = null;
         const mx = mouse.x, my = mouse.y;
-        const drawOrder = [...nodes].sort((a,b) => (a.z - b.z) || (a.r - b.r));
         for (const n of drawOrder) {
           const p = nodeScreenPos(n);
           // Use num() to guarantee finite fallbacks (screen center if coord is missing/invalid).
